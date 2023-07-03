@@ -12,6 +12,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/drivers/uart.h>
 #include <dk_buttons_and_leds.h>
+#include <zephyr/pm/device.h>
 
 #define LOG_MODULE_NAME main
 LOG_MODULE_REGISTER(LOG_MODULE_NAME);
@@ -38,6 +39,59 @@ static uint8_t *next_buf = uart_rx_buf[1];
 
 static K_FIFO_DEFINE(fifo_uart_tx_data);
 static K_FIFO_DEFINE(fifo_uart_rx_data);
+
+// enum pm_device_action {
+// 	/** Suspend. */
+// 	PM_DEVICE_ACTION_SUSPEND,
+// 	/** Resume. */
+// 	PM_DEVICE_ACTION_RESUME,
+// 	/** Turn off. */
+// 	PM_DEVICE_ACTION_TURN_OFF,
+// 	/** Force suspend. */
+// 	PM_DEVICE_ACTION_FORCE_SUSPEND,
+// };
+
+int poweroff_uart(void)
+{
+	int err;
+	uart_rx_disable(uart);
+	k_sleep(K_MSEC(100));
+	err = pm_device_action_run(uart, PM_DEVICE_ACTION_TURN_OFF);
+	if (err) {
+		LOG_ERR("Can't suspend uart: %d", err);
+	}
+	return err;
+}
+
+int poweron_uart(void)
+{
+	//#define SLM_SYNC_STR	"Ready\r\n"
+	int err;
+	// NRF_UARTE0 -> PSEL.TXD =  0x09;   //tx=p0.09
+ 	// NRF_UARTE0 -> PSEL.RXD =  0x0A;   //rx=p0.10	
+	err = pm_device_action_run(uart, PM_DEVICE_ACTION_TURN_ON);
+	// NRF_UARTE0 -> PSEL.TXD =  0x03;   //tx=p0.03
+ 	// NRF_UARTE0 -> PSEL.RXD =  0x04;   //rx=p0.04
+	if (err == -EALREADY) {
+		/* Already on, no action */
+		return 0;
+	}
+	if (err) {
+		return err;
+	}
+	k_sleep(K_MSEC(100));
+	err = uart_receive();
+	if (err) {
+		return err;
+	}	
+	// //k_sem_give(&tx_done);
+	// #if 0
+	// rsp_send(SLM_SYNC_STR, sizeof(SLM_SYNC_STR)-1);
+	// #endif
+
+	return 0;
+}
+
 
 
 static void uart_cb(const struct device *dev, struct uart_event *evt, void *user_data)
@@ -165,11 +219,40 @@ void uart_rx_cb(uint8_t *data, uint16_t len)
 	}
 }
 
+static void button_handler(uint32_t button_state, uint32_t has_changed) 
+{
+	int err = 0;
+	switch (has_changed) {
+	case DK_BTN1_MSK:
+		if (button_state & DK_BTN1_MSK){	
+			err = poweroff_uart();
+			if (err) {
+				LOG_INF("uart poweroff err %d", err);
+			}				
+		}
+		break;
+
+	case DK_BTN2_MSK:
+		if (button_state & DK_BTN2_MSK){	
+			err = poweron_uart();
+			if( err){
+				LOG_INF("uart poweron err %d", err);			
+			}
+		}
+		break;
+	}
+}
+
 void main(void)
 {
 	int err = 0;
 
 	LOG_INF("### high speed UART example %s %s\n", __TIME__, __DATE__);	
+	err = dk_buttons_init(button_handler);
+	if (err) {
+		LOG_ERR("Buttons init failed (err: %d)", err);
+		return err;
+	}
 
 	err = uart_init(uart_rx_cb);
 	if (err) {
