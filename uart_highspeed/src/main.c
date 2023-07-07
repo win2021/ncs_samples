@@ -51,27 +51,28 @@ static K_FIFO_DEFINE(fifo_uart_rx_data);
 // 	PM_DEVICE_ACTION_FORCE_SUSPEND,
 // };
 
-int poweroff_uart(void)
+int remap_uart_pin(bool group_gpio)
 {
-	int err;
-	uart_rx_disable(uart);
-	k_sleep(K_MSEC(100));
-	err = pm_device_action_run(uart, PM_DEVICE_ACTION_TURN_OFF);
-	if (err) {
-		LOG_ERR("Can't suspend uart: %d", err);
-	}
-	return err;
+	if(group_gpio == true){
+		NRF_UARTE0 -> PSEL.TXD =  0x03;   //tx=p0.03
+ 		NRF_UARTE0 -> PSEL.RXD =  0x04;   //rx=p0.04
+		NRF_UARTE0 -> BAUDRATE =  0x0F000000;   //921600
+		LOG_INF("uart pin 3-4");
+	} else if(group_gpio == false){
+		NRF_UARTE0 -> PSEL.TXD =  0x06;   //tx=p0.06
+ 		NRF_UARTE0 -> PSEL.RXD =  0x08;   //rx=p0.08
+		NRF_UARTE0 -> BAUDRATE =  0x01D60000;   //115200
+		LOG_INF("uart pin 6-8");
+	}	
 }
 
 int poweron_uart(void)
 {
 	//#define SLM_SYNC_STR	"Ready\r\n"
 	int err;
-	// NRF_UARTE0 -> PSEL.TXD =  0x09;   //tx=p0.09
- 	// NRF_UARTE0 -> PSEL.RXD =  0x0A;   //rx=p0.10	
 	err = pm_device_action_run(uart, PM_DEVICE_ACTION_TURN_ON);
-	// NRF_UARTE0 -> PSEL.TXD =  0x03;   //tx=p0.03
- 	// NRF_UARTE0 -> PSEL.RXD =  0x04;   //rx=p0.04
+	NRF_UARTE0 -> PSEL.TXD =  0x06;  
+ 	NRF_UARTE0 -> PSEL.RXD =  0x08;   
 	if (err == -EALREADY) {
 		/* Already on, no action */
 		return 0;
@@ -221,14 +222,16 @@ void uart_rx_cb(uint8_t *data, uint16_t len)
 
 static void button_handler(uint32_t button_state, uint32_t has_changed) 
 {
+	static bool dx = false;
 	int err = 0;
 	switch (has_changed) {
 	case DK_BTN1_MSK:
 		if (button_state & DK_BTN1_MSK){	
-			err = poweroff_uart();
+			err = remap_uart_pin(dx);
 			if (err) {
 				LOG_INF("uart poweroff err %d", err);
-			}				
+			}
+			dx = !dx;				
 		}
 		break;
 
